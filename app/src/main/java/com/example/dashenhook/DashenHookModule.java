@@ -62,7 +62,8 @@ public class DashenHookModule implements IXposedHookZygoteInit, IXposedHookLoadP
                         try {
                             Object bindData = param.args[0];
                             Object appInfo = XposedHelpers.getObjectField(bindData, "appInfo");
-                            String packageName = (String) XposedHelpers.callMethod(appInfo, "getPackageName");
+                            // packageName 是 ApplicationInfo 的字段，不是方法
+                            String packageName = (String) XposedHelpers.getObjectField(appInfo, "packageName");
                             Object processName = XposedHelpers.getObjectField(bindData, "processName");
 
                             if (TARGET_PACKAGE.equals(packageName)) {
@@ -76,13 +77,18 @@ public class DashenHookModule implements IXposedHookZygoteInit, IXposedHookLoadP
                                     try {
                                         ClassLoader cl = (ClassLoader) XposedHelpers.callMethod(loadedApk, "getClassLoader");
                                         if (cl != null) {
+                                            writeLog("[GLOBAL] ClassLoader 获取成功！尝试 Hook OkHttp...");
                                             hookOkHttpGlobal(cl);
                                             sHookedGlobal = true;
                                             writeLog("[GLOBAL] ✅ Hook 完成！");
+                                        } else {
+                                            writeLog("[GLOBAL] ClassLoader 为 null");
                                         }
                                     } catch (Throwable t) {
                                         writeLog("[GLOBAL] getClassLoader 失败: " + t.getMessage());
                                     }
+                                } else {
+                                    writeLog("[GLOBAL] loadedApk 为 null");
                                 }
                             }
                         } catch (Throwable t) {
