@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <!-- 标题栏 -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="大神Hook 监控面板"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="12dp" />
+
+    <!-- 进程状态卡片 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#F5F5F5"
+        android:padding="12dp"
+        android:layout_marginBottom="12dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="网易大神状态"
+                android:textSize="14sp"
+                android:textColor="#666" />
+
+            <TextView
+                android:id="@+id/tvProcessStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="检测中..."
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="#FF6200EE" />
+
+            <TextView
+                android:id="@+id/tvProcessPid"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="PID: -"
+                android:textSize="13sp"
+                android:textColor="#999" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="模块状态"
+                android:textSize="14sp"
+                android:textColor="#666" />
+
+            <TextView
+                android:id="@+id/tvModuleStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="等待注入..."
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="#666" />
+
+            <TextView
+                android:id="@+id/tvHookStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Hook: 未就绪"
+                android:textSize="13sp"
+                android:textColor="#999" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 操作按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="12dp">
+
+        <Button
+            android:id="@+id/btnRefreshLog"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:text="刷新日志"
+            android:layout_marginEnd="6dp" />
+
+        <Button
+            android:id="@+id/btnClearLog"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:text="清空日志"
+            android:layout_marginStart="6dp" />
+    </LinearLayout>
+
+    <!-- 日志显示区域 -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="实时日志"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="4dp" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#1E1E1E"
+        android:padding="6dp">
+
+        <TextView
+            android:id="@+id/tvLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="等待数据..."
+            android:textSize="11sp"
+            android:textColor="#00FF00"
+            android:fontFamily="monospace"
+            android:lineSpacingExtra="2dp" />
+    </ScrollView>
+
+</LinearLayout>

@@ -2,21 +2,31 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="true"
-        android:label="网易大神积分自动拦截">
-        
-        <!-- 告诉系统这是一个 Xposed 模块 -->
+        android:label="大神Hook"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.DashenHook">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="大神Hook 监控面板">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Xposed 模块声明 -->
         <meta-data
             android:name="xposedmodule"
             android:value="true" />
-        
-        <!-- 模块在管理器中显示的描述 -->
         <meta-data
             android:name="xposeddescription"
             android:value="自动拦截并解密网易大神梦幻积分参数，实时同步到本地" />
-        
-        <!-- 支持的最低 Xposed API 版本 -->
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
