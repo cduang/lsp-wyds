@@ -63,6 +63,16 @@ public class MainActivity extends Activity {
         refreshProcessStatus();
         refreshModuleStatus();
         refreshLog();
+        refreshPackagesList();
+    }
+    
+    /**
+     * 读取 zygote_packages.log 显示所有被调用的包
+     */
+    private void refreshPackagesList() {
+        String pkgInfo = readFile("/sdcard/DashenHook/zygote_packages.log");
+        String injectFlag = readFile("/sdcard/DashenHook/injected.flag");
+        // 附加到日志显示区上方
     }
 
     /**

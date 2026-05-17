@@ -1,6 +1,7 @@
 package com.example.dashenhook;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
+import de.robv.android.xposed.IXposedHookZygoteInit;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
@@ -19,7 +20,7 @@ import java.util.Locale;
 
 import org.json.JSONObject;
 
-public class DashenHookModule implements IXposedHookLoadPackage {
+public class DashenHookModule implements IXposedHookLoadPackage, IXposedHookZygoteInit {
     private static final String TAG = "DashenPointsHook";
     private static final String TARGET_PACKAGE = "com.netease.gl";
     private static final String HOOK_DIR = "/sdcard/DashenHook";
@@ -27,6 +28,31 @@ public class DashenHookModule implements IXposedHookLoadPackage {
     private static final String LOG_FILE = HOOK_DIR + "/dashen_hook.log";
 
     private static boolean sHasRoot = false;
+    private static final StringBuilder sAllPackages = new StringBuilder();
+
+    // ==================== Zygote 初始化 ====================
+
+    @Override
+    public void initZygote(StartupParam startupParam) throws Throwable {
+        // Zygote 阶段（系统刚启动时执行一次）
+        // 在这里尝试初始化 root，这样后续所有进程都能用
+        try {
+            String test = execRoot("id");
+            sHasRoot = test.contains("uid=");
+        } catch (Throwable ignored) {}
+
+        if (sHasRoot) {
+            execRootSilent("mkdir -p '" + HOOK_DIR + "'");
+            execRootSilent("chmod 0777 '" + HOOK_DIR + "'");
+        }
+
+        // 写一条 Zygote 日志
+        String msg = "[ZYGOTE] initZygote() root=" + sHasRoot;
+        XposedBridge.log(TAG + " " + msg);
+        if (sHasRoot) {
+            rootAppendLog(LOG_FILE, "[" + timestamp() + "] " + msg);
+        }
+    }
 
     // ==================== Root 工具方法 ====================
 
@@ -37,13 +63,10 @@ public class DashenHookModule implements IXposedHookLoadPackage {
             osw.write(command + "\n");
             osw.write("exit\n");
             osw.flush();
-
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
             StringBuilder out = new StringBuilder();
             String line;
-            while ((line = reader.readLine()) != null) {
-                out.append(line).append("\n");
-            }
+            while ((line = reader.readLine()) != null) out.append(line).append("\n");
             process.waitFor();
             return out.toString().trim();
         } catch (Exception e) {
@@ -51,7 +74,7 @@ public class DashenHookModule implements IXposedHookLoadPackage {
         }
     }
 
-    private static String execRootSilent(String command) {
+    private static void execRootSilent(String command) {
         try {
             Process process = Runtime.getRuntime().exec("su");
             java.io.OutputStreamWriter osw = new java.io.OutputStreamWriter(process.getOutputStream());
@@ -59,10 +82,7 @@ public class DashenHookModule implements IXposedHookLoadPackage {
             osw.write("exit\n");
             osw.flush();
             process.waitFor();
-            return "";
-        } catch (Exception ignored) {
-            return "";
-        }
+        } catch (Exception ignored) {}
     }
 
     private static void rootWriteFile(String filePath, String content) {
@@ -83,7 +103,7 @@ public class DashenHookModule implements IXposedHookLoadPackage {
         execRootSilent("chmod 0666 '" + filePath + "'");
     }
 
-    // ==================== 日志（带 fallback） ====================
+    // ==================== 日志 ====================
 
     private static String timestamp() {
         return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(new Date());
@@ -91,20 +111,10 @@ public class DashenHookModule implements IXposedHookLoadPackage {
 
     private void writeLog(String msg) {
         String line = "[" + timestamp() + "] " + msg;
-        // always log to XposedBridge
         XposedBridge.log(TAG + " " + msg);
-
-        // try root write
-        boolean done = false;
         if (sHasRoot) {
-            try {
-                rootAppendLog(LOG_FILE, line);
-                done = true;
-            } catch (Throwable ignored) {}
-        }
-
-        // fallback: try direct File API (可能因 Scoped Storage 失败)
-        if (!done) {
+            try { rootAppendLog(LOG_FILE, line); } catch (Throwable ignored) {}
+        } else {
             try {
                 File dir = new File(HOOK_DIR);
                 if (!dir.exists()) dir.mkdirs();
@@ -115,61 +125,59 @@ public class DashenHookModule implements IXposedHookLoadPackage {
         }
     }
 
-    // ==================== 初始化 ====================
-
-    private void initEnvironment() {
-        // 测试 su
-        String test = execRoot("id");
-        sHasRoot = test.contains("uid=");
-
-        if (sHasRoot) {
-            XposedBridge.log(TAG + " [INIT] root 可用！");
-            execRootSilent("mkdir -p '" + HOOK_DIR + "'");
-            execRootSilent("chmod 0777 '" + HOOK_DIR + "'");
-        } else {
-            XposedBridge.log(TAG + " [INIT] root 不可用，尝试普通文件 API");
-            try {
-                File dir = new File(HOOK_DIR);
-                boolean ok = dir.exists() || dir.mkdirs();
-                XposedBridge.log(TAG + " [INIT] mkdirs() = " + ok);
-            } catch (Throwable t) {
-                XposedBridge.log(TAG + " [INIT] mkdirs() 异常: " + t.getMessage());
-            }
-        }
-
-        writeLog("========================================");
-        writeLog("[BOOT] 模块已启动！root=" + sHasRoot + " ClassLoader=" + getClass().getClassLoader());
-    }
-
-    // ==================== 主入口 ====================
+    // ==================== LoadPackage ====================
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        // 首次加载时初始化环境
-        initEnvironment();
+        // 记录所有被调用的包名（用于诊断 LSPosed 作用域问题）
+        String pkg = lpparam.packageName;
+        String proc = lpparam.processName;
+        synchronized (sAllPackages) {
+            if (sAllPackages.indexOf(pkg) < 0) {
+                if (sAllPackages.length() > 0) sAllPackages.append(", ");
+                sAllPackages.append(pkg);
+            }
+        }
 
-        writeLog("handleLoadPackage() package=" + lpparam.packageName);
+        writeLog("--------------------------------------------------");
+        writeLog("handleLoadPackage() package=" + pkg + " process=" + proc);
 
-        if (!lpparam.packageName.equals(TARGET_PACKAGE)) {
-            writeLog("跳过: " + lpparam.packageName);
+        // 如果 root 未在 Zygote 阶段初始化，在这里初始化
+        if (!sHasRoot) {
+            String test = execRoot("id");
+            sHasRoot = test.contains("uid=");
+            writeLog("root init: " + (sHasRoot ? "可用" : "不可用"));
+        }
+
+        // 写入已调用列表
+        if (sHasRoot) {
+            synchronized (sAllPackages) {
+                String info = "packages_called=" + sAllPackages.toString() + "\nlast_update=" + System.currentTimeMillis();
+                rootWriteFile(HOOK_DIR + "/zygote_packages.log", info);
+            }
+        }
+
+        // 过滤目标
+        if (!pkg.equals(TARGET_PACKAGE)) {
+            writeLog("跳过: " + pkg);
             return;
         }
 
-        writeLog(">>> 成功注入网易大神！");
+        writeLog(">>> ✅ 成功注入目标应用: " + pkg);
 
-        // 写入一个标记文件，确认模块已加载
+        // 写入注入成功标记
         if (sHasRoot) {
-            rootWriteFile(HOOK_DIR + "/module_loaded.flag",
-                    "loaded_at=" + System.currentTimeMillis() + "\n" +
-                    "package=" + lpparam.packageName + "\n" +
-                    "processName=" + lpparam.processName);
+            rootWriteFile(HOOK_DIR + "/injected.flag",
+                    "injected_at=" + System.currentTimeMillis() + "\n" +
+                    "pid=" + getPid() + "\n" +
+                    "package=" + pkg + "\n" +
+                    "process=" + proc);
         }
 
         // 尝试 Hook RealCall
         String[][] candidates = {
             {"okhttp3.RealCall", "okhttp3.Callback", "okhttp3.Request"},
             {"okhttp3.internal.connection.RealCall", "okhttp3.Callback", "okhttp3.Request"},
-            {"okhttp3.RealCall", "okhttp3.Callback", "okhttp3.Request"},
         };
 
         boolean hooked = false;
@@ -184,78 +192,46 @@ public class DashenHookModule implements IXposedHookLoadPackage {
             }
         }
 
-        // 额外尝试 Hook OkHttpClient
-        try {
-            XposedHelpers.findAndHookMethod(
-                "okhttp3.OkHttpClient",
-                lpparam.classLoader,
-                "newCall",
-                "okhttp3.Request",
-                new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                        Object call = param.getResult();
-                        if (call != null) {
-                            writeLog("newCall() -> " + call.getClass().getName());
-                        }
-                    }
-                }
-            );
-            writeLog(">>> 成功 Hook: OkHttpClient.newCall()");
-        } catch (Throwable t) {
-            writeLog(">>> OkHttpClient.newCall() 失败: " + t.getMessage());
-        }
-
         if (!hooked) {
-            writeLog(">>> ⚠ 未找到 RealCall！尝试直接 hook Response ...");
-            // fallback: hook Response 的 body() 来捕获所有请求
+            writeLog(">>> ⚠ RealCall Hook 全部失败");
+            // 尝试 Hook newCall
             try {
-                hookResponseBody(lpparam.classLoader);
-                writeLog(">>> 成功 Hook: Response.body() fallback");
+                hookNewCall(lpparam.classLoader);
+                writeLog(">>> 成功 Hook: OkHttpClient.newCall()");
                 hooked = true;
             } catch (Throwable t) {
-                writeLog(">>> Response.body() fallback 也失败: " + t.getMessage());
+                writeLog(">>> newCall() 失败: " + t.getMessage());
             }
         }
 
-        writeLog(">>> 初始化完成，hooked=" + hooked);
-        writeLog("========================================");
+        writeLog(">>> 完成, hooked=" + hooked);
+        writeLog("--------------------------------------------------");
     }
 
     // ==================== Hook 方法 ====================
 
     private void hookRealCall(String realCallClass, String callbackClass, ClassLoader cl) throws Throwable {
-        // Hook execute()
-        XposedHelpers.findAndHookMethod(
-            realCallClass, cl, "execute",
+        XposedHelpers.findAndHookMethod(realCallClass, cl, "execute",
             new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    Object response = param.getResult();
-                    handleResponse(response);
+                    handleResponse(param.getResult());
                 }
             }
         );
 
-        // Hook enqueue()
         Class<?> cbClass = XposedHelpers.findClass(callbackClass, cl);
-        XposedHelpers.findAndHookMethod(
-            realCallClass, cl, "enqueue", cbClass,
+        XposedHelpers.findAndHookMethod(realCallClass, cl, "enqueue", cbClass,
             new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     Object originalCallback = param.args[0];
                     if (originalCallback == null) return;
-
-                    param.args[0] = Proxy.newProxyInstance(
-                        cl,
-                        new Class<?>[]{cbClass},
+                    param.args[0] = Proxy.newProxyInstance(cl, new Class<?>[]{cbClass},
                         new InvocationHandler() {
                             @Override
                             public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                                if ("onResponse".equals(method.getName())) {
-                                    handleResponse(args[1]);
-                                }
+                                if ("onResponse".equals(method.getName())) handleResponse(args[1]);
                                 return method.invoke(originalCallback, args);
                             }
                         }
@@ -265,27 +241,44 @@ public class DashenHookModule implements IXposedHookLoadPackage {
         );
     }
 
-    /**
-     * Fallback: Hook Response.body() 来捕获所有响应
-     */
-    private void hookResponseBody(ClassLoader cl) throws Throwable {
-        XposedHelpers.findAndHookMethod(
-            "okhttp3.Response", cl, "body",
+    private void hookNewCall(ClassLoader cl) throws Throwable {
+        XposedHelpers.findAndHookMethod("okhttp3.OkHttpClient", cl, "newCall",
+            "okhttp3.Request",
             new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    // 不直接处理，只是记录
-                }
-            }
-        );
-
-        // Hook Response.peekBody()
-        XposedHelpers.findAndHookMethod(
-            "okhttp3.Response", cl, "peekBody", long.class,
-            new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    XposedBridge.log(TAG + " peekBody() called");
+                    Object call = param.getResult();
+                    if (call != null) {
+                        try {
+                            XposedHelpers.findAndHookMethod(call.getClass(), "execute",
+                                new XC_MethodHook() {
+                                    @Override
+                                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                                        handleResponse(p.getResult());
+                                    }
+                                }
+                            );
+                            Class<?> cb = XposedHelpers.findClass("okhttp3.Callback", cl);
+                            XposedHelpers.findAndHookMethod(call.getClass(), "enqueue", cb,
+                                new XC_MethodHook() {
+                                    @Override
+                                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                                        Object orig = p.args[0];
+                                        if (orig == null) return;
+                                        p.args[0] = Proxy.newProxyInstance(cl, new Class<?>[]{cb},
+                                            new InvocationHandler() {
+                                                @Override
+                                                public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                                                    if ("onResponse".equals(method.getName())) handleResponse(args[1]);
+                                                    return method.invoke(orig, args);
+                                                }
+                                            }
+                                        );
+                                    }
+                                }
+                            );
+                        } catch (Throwable ignored) {}
+                    }
                 }
             }
         );
@@ -308,8 +301,8 @@ public class DashenHookModule implements IXposedHookLoadPackage {
                 String glDevice = (String) XposedHelpers.callMethod(request, "header", "GL-DeviceId");
                 String glNonce = (String) XposedHelpers.callMethod(request, "header", "GL-Nonce");
 
-                writeLog(">>> Headers: Uid=" + glUid + " Token=" + (glToken != null ? glToken.substring(0, Math.min(10, glToken.length())) + "..." : "null")
-                        + " Device=" + glDevice + " Nonce=" + glNonce);
+                writeLog(">>> Headers: Uid=" + glUid + " Token=" +
+                    (glToken != null ? glToken.substring(0, Math.min(10, glToken.length())) + "..." : "null"));
 
                 JSONObject vault = new JSONObject();
                 vault.put("url", url);
@@ -319,26 +312,32 @@ public class DashenHookModule implements IXposedHookLoadPackage {
                 vault.put("gl_nonce", glNonce != null ? glNonce : "");
                 vault.put("timestamp", System.currentTimeMillis());
 
-                String json = vault.toString(2);
-
                 if (sHasRoot) {
-                    rootWriteFile(VAULT_FILE, json);
+                    rootWriteFile(VAULT_FILE, vault.toString(2));
                 } else {
                     File dir = new File(HOOK_DIR);
                     if (!dir.exists()) dir.mkdirs();
                     FileWriter fw = new FileWriter(VAULT_FILE);
-                    fw.write(json);
+                    fw.write(vault.toString(2));
                     fw.close();
                 }
-
                 writeLog(">>> ✅ 凭证已写入: " + VAULT_FILE);
             }
         } catch (Throwable t) {
-            writeLog(">>> ❌ handleResponse 异常: " + t.getMessage());
+            writeLog(">>> ❌ 异常: " + t.getMessage());
             java.io.StringWriter sw = new java.io.StringWriter();
             java.io.PrintWriter pw = new java.io.PrintWriter(sw);
             t.printStackTrace(pw);
             writeLog(">>> StackTrace: " + sw.toString());
+        }
+    }
+
+    private static int getPid() {
+        try {
+            return Integer.parseInt(new BufferedReader(new InputStreamReader(
+                Runtime.getRuntime().exec("echo $$").getInputStream())).readLine().trim());
+        } catch (Exception e) {
+            return -1;
         }
     }
 }
