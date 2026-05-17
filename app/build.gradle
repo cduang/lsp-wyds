@@ -1,0 +1,39 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.example.dashenhook'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.example.dashenhook"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // 引入 Xposed 编译期依赖（不打包进APK）
+    compileOnly ' EasterNll:xposed-api:82' 
+    // 上面如果失效，可用通用标准版：
+    compileOnly 'com.github.kyuubiran:ezxhelper:1.0.3'
+    compileOnly files('libs/api-82.jar') // 传统方式，这里我们直接用 maven
+    compileOnly 'top.canyie.pine:pine:0.2.6'
+    
+    // 也可以直接引入标准类库
+    compileOnly 'de.robv.android.xposed:api:82'
+}
