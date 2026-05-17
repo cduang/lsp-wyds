@@ -28,5 +28,5 @@ android {
 
 dependencies {
     // Xposed Framework API（编译期依赖，不打包进 APK）
-    compileOnly 'de.robv.android.xposed:api:82'
+    compileOnly files('libs/api-82.jar')
 }
