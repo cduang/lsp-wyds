@@ -27,13 +27,8 @@ android {
 }
 
 dependencies {
-    // 引入 Xposed 编译期依赖（不打包进APK）
-    compileOnly ' EasterNll:xposed-api:82' 
-    // 上面如果失效，可用通用标准版：
+    // 引入 Xposed 编译期依赖（不打包进APK）- 通过 JitPack 解析
+    compileOnly 'com.github.EasterNll:xposed-api:82'
     compileOnly 'com.github.kyuubiran:ezxhelper:1.0.3'
-    compileOnly files('libs/api-82.jar') // 传统方式，这里我们直接用 maven
     compileOnly 'top.canyie.pine:pine:0.2.6'
-    
-    // 也可以直接引入标准类库
-    compileOnly 'de.robv.android.xposed:api:82'
 }
