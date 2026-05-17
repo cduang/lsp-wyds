@@ -27,32 +27,56 @@ public class DashenHookModule implements IXposedHookLoadPackage {
     private static final String VAULT_FILE = HOOK_DIR + "dashen_vault.json";
     private static final String LOG_FILE = HOOK_DIR + "dashen_hook.log";
 
+    private static boolean initialized = false;
+    private static boolean firstWrite = true;
+
     /**
-     * 同时写文件日志和 XposedBridge 日志，方便排查问题
+     * 初始化时立即创建目录，验证模块是否真的被加载
      */
+    private static synchronized void ensureDir() {
+        if (firstWrite) {
+            firstWrite = false;
+            try {
+                File dir = new File(HOOK_DIR);
+                if (!dir.exists()) {
+                    boolean created = dir.mkdirs();
+                    // 立即写一条日志验证
+                    FileWriter fw = new FileWriter(LOG_FILE, false);
+                    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault());
+                    fw.write("[" + sdf.format(new Date()) + "] [BOOT] 模块已加载! dir.mkdirs()=" + created + "\n");
+                    fw.write("[" + sdf.format(new Date()) + "] [BOOT] ClassLoader=" + DashenHookModule.class.getClassLoader() + "\n");
+                    fw.close();
+                }
+            } catch (Throwable t) {
+                // 能写 XposedBridge 日志也行
+                XposedBridge.log(TAG + " [BOOT] 初始化失败: " + t.getMessage());
+            }
+        }
+    }
+
     private void writeLog(String message) {
         try {
-            File dir = new File(HOOK_DIR);
-            if (!dir.exists()) {
-                dir.mkdirs();
-            }
+            ensureDir();
             FileWriter fw = new FileWriter(LOG_FILE, true);
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault());
             fw.write("[" + sdf.format(new Date()) + "] " + message + "\n");
             fw.close();
         } catch (Throwable ignored) {
-            // 写文件失败不影响主逻辑
         }
         XposedBridge.log(TAG + " " + message);
     }
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
+        // 每次 handleLoadPackage 被调用都写日志
+        writeLog("========================================");
+        writeLog("handleLoadPackage() 被调用! package=" + lpparam.packageName);
+
         if (!lpparam.packageName.equals(TARGET_PACKAGE)) {
+            writeLog("跳过非目标应用: " + lpparam.packageName);
             return;
         }
 
-        writeLog("========================================");
         writeLog("成功注入网易大神！正在监听网络层...");
 
         // 尝试多个 OkHttp 版本中 RealCall 的可能类名
@@ -69,7 +93,7 @@ public class DashenHookModule implements IXposedHookLoadPackage {
                 hooked = true;
                 break;
             } catch (Throwable t) {
-                writeLog(">>> " + clazz + " 不存在或 Hook 失败: " + t.getMessage());
+                writeLog(">>> " + clazz + " 不存在: " + t.getMessage());
             }
         }
 
@@ -85,7 +109,7 @@ public class DashenHookModule implements IXposedHookLoadPackage {
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                         Object realCall = param.getResult();
                         if (realCall != null) {
-                            writeLog("newCall() -> " + realCall.getClass().getName());
+                            writeLog("newCall() 被调用 -> 实际类型: " + realCall.getClass().getName());
                         }
                     }
                 }
@@ -96,8 +120,11 @@ public class DashenHookModule implements IXposedHookLoadPackage {
         }
 
         if (!hooked) {
-            writeLog(">>> 警告: 未找到任何 RealCall 类，请检查 OkHttp 版本！");
+            writeLog(">>> 警告: 未找到任何 RealCall 类！请检查 OkHttp 版本");
         }
+
+        initialized = true;
+        writeLog("========================================");
     }
 
     private void hookRealCall(String className, ClassLoader classLoader) throws Throwable {
@@ -132,7 +159,6 @@ public class DashenHookModule implements IXposedHookLoadPackage {
                                     if ("onResponse".equals(method.getName())) {
                                         handleOkHttpResponse(args[1]);
                                     }
-                                    // onFailure 原样透传
                                     return method.invoke(originalCallback, args);
                                 }
                             }
@@ -149,9 +175,8 @@ public class DashenHookModule implements IXposedHookLoadPackage {
             Object urlObj = XposedHelpers.callMethod(request, "url");
             String url = urlObj.toString();
 
-            // 仅记录目标 API 的请求，忽略其他以减少日志量
             if (url.contains("/v1/act/common/currency/getCurrencyInfo")) {
-                writeLog(">>> 命中目标 API!");
+                writeLog(">>> 命中目标 API: " + url);
 
                 String glUid = (String) XposedHelpers.callMethod(request, "header", "GL-Uid");
                 String glToken = (String) XposedHelpers.callMethod(request, "header", "GL-Token");
@@ -163,7 +188,6 @@ public class DashenHookModule implements IXposedHookLoadPackage {
                         + " GL-DeviceId=" + glDevice
                         + " GL-Nonce=" + glNonce);
 
-                // 创建 JSON
                 JSONObject vault = new JSONObject();
                 vault.put("url", url);
                 vault.put("gl_uid", glUid != null ? glUid : "");
@@ -172,7 +196,6 @@ public class DashenHookModule implements IXposedHookLoadPackage {
                 vault.put("gl_nonce", glNonce != null ? glNonce : "");
                 vault.put("timestamp", System.currentTimeMillis());
 
-                // 写入 /sdcard/DashenHook/dashen_vault.json
                 File dir = new File(HOOK_DIR);
                 if (!dir.exists()) {
                     dir.mkdirs();
@@ -185,7 +208,6 @@ public class DashenHookModule implements IXposedHookLoadPackage {
                 writeLog(">>> ✅ 凭证已写入: " + targetFile.getAbsolutePath());
             }
         } catch (Throwable t) {
-            // 详细记录异常栈
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             t.printStackTrace(pw);
