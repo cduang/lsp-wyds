@@ -7,10 +7,9 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
+import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileWriter;
-import java.io.PrintWriter;
-import java.io.StringWriter;
+import java.io.InputStreamReader;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -23,52 +22,122 @@ import org.json.JSONObject;
 public class DashenHookModule implements IXposedHookLoadPackage {
     private static final String TAG = "DashenPointsHook";
     private static final String TARGET_PACKAGE = "com.netease.gl";
-    private static final String HOOK_DIR = "/sdcard/DashenHook/";
-    private static final String VAULT_FILE = HOOK_DIR + "dashen_vault.json";
-    private static final String LOG_FILE = HOOK_DIR + "dashen_hook.log";
-
-    private static boolean initialized = false;
-    private static boolean firstWrite = true;
+    private static final String HOOK_DIR = "/sdcard/DashenHook";
+    private static final String VAULT_FILE = HOOK_DIR + "/dashen_vault.json";
+    private static final String LOG_FILE = HOOK_DIR + "/dashen_hook.log";
 
     /**
-     * 初始化时立即创建目录，验证模块是否真的被加载
+     * 通过 root (su) 执行 shell 命令
      */
-    private static synchronized void ensureDir() {
-        if (firstWrite) {
-            firstWrite = false;
-            try {
-                File dir = new File(HOOK_DIR);
-                if (!dir.exists()) {
-                    boolean created = dir.mkdirs();
-                    // 立即写一条日志验证
-                    FileWriter fw = new FileWriter(LOG_FILE, false);
-                    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault());
-                    fw.write("[" + sdf.format(new Date()) + "] [BOOT] 模块已加载! dir.mkdirs()=" + created + "\n");
-                    fw.write("[" + sdf.format(new Date()) + "] [BOOT] ClassLoader=" + DashenHookModule.class.getClassLoader() + "\n");
-                    fw.close();
-                }
-            } catch (Throwable t) {
-                // 能写 XposedBridge 日志也行
-                XposedBridge.log(TAG + " [BOOT] 初始化失败: " + t.getMessage());
+    private static String execRoot(String command) {
+        try {
+            Process process = Runtime.getRuntime().exec("su");
+            java.io.OutputStreamWriter osw = new java.io.OutputStreamWriter(process.getOutputStream());
+            osw.write(command + "\n");
+            osw.write("exit\n");
+            osw.flush();
+
+            // 读取 stdout
+            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            StringBuilder output = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
             }
+
+            // 读取 stderr
+            BufferedReader errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream()));
+            StringBuilder error = new StringBuilder();
+            while ((line = errorReader.readLine()) != null) {
+                error.append(line).append("\n");
+            }
+
+            process.waitFor();
+            String result = output.toString().trim();
+            String errStr = error.toString().trim();
+
+            if (!errStr.isEmpty()) {
+                return "[ERR] " + errStr;
+            }
+            return result.isEmpty() ? "[OK]" : result;
+        } catch (Exception e) {
+            return "[EXCEPTION] " + e.getMessage();
         }
     }
 
+    /**
+     * 通过 root 写文件（避免 Android 10+ Scoped Storage 限制）
+     */
+    private static void rootWriteFile(String filePath, String content) {
+        // 先确保目录存在
+        String dir = filePath.substring(0, filePath.lastIndexOf('/'));
+        execRoot("mkdir -p '" + dir + "'");
+        execRoot("chmod 0777 '" + dir + "'");
+
+        // 用 echo 写入文件（转义特殊字符）
+        String escaped = content
+                .replace("'", "'\\''");
+        execRoot("echo '" + escaped + "' > '" + filePath + "'");
+        execRoot("chmod 0666 '" + filePath + "'");
+    }
+
+    /**
+     * 通过 root 追加写日志
+     */
+    private static void rootAppendLog(String filePath, String line) {
+        String dir = filePath.substring(0, filePath.lastIndexOf('/'));
+        execRoot("mkdir -p '" + dir + "'");
+        execRoot("chmod 0777 '" + dir + "'");
+
+        String escaped = line
+                .replace("'", "'\\''");
+        execRoot("echo '" + escaped + "' >> '" + filePath + "'");
+        execRoot("chmod 0666 '" + filePath + "'");
+    }
+
+    /**
+     * 写日志（同时写文件 + XposedBridge.log）
+     */
     private void writeLog(String message) {
-        try {
-            ensureDir();
-            FileWriter fw = new FileWriter(LOG_FILE, true);
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault());
-            fw.write("[" + sdf.format(new Date()) + "] " + message + "\n");
-            fw.close();
-        } catch (Throwable ignored) {
-        }
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault());
+        String line = "[" + sdf.format(new Date()) + "] " + message;
+        rootAppendLog(LOG_FILE, line);
         XposedBridge.log(TAG + " " + message);
+    }
+
+    /**
+     * 初始化（验证 root 可用 + 创建目录）
+     */
+    private boolean initRoot() {
+        // 测试 su 是否可用
+        String testResult = execRoot("id");
+        writeLog("[INIT] su 测试: " + testResult);
+
+        // 强制创建目录
+        String mkdirResult = execRoot("mkdir -p '" + HOOK_DIR + "'");
+        writeLog("[INIT] 创建目录: " + mkdirResult);
+
+        String chmodResult = execRoot("chmod 0777 '" + HOOK_DIR + "'");
+        writeLog("[INIT] 权限设置: " + chmodResult);
+
+        // 写入启动标记
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault());
+        String bootLine = "[" + sdf.format(new Date()) + "] [BOOT] 模块已加载! ClassLoader="
+                + DashenHookModule.class.getClassLoader();
+        rootAppendLog(LOG_FILE, bootLine);
+
+        return testResult.contains("uid=");
     }
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        // 每次 handleLoadPackage 被调用都写日志
+        try {
+            // 先初始化 root 环境
+            initRoot();
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + " [BOOT] root 初始化异常: " + t.getMessage());
+        }
+
         writeLog("========================================");
         writeLog("handleLoadPackage() 被调用! package=" + lpparam.packageName);
 
@@ -123,7 +192,6 @@ public class DashenHookModule implements IXposedHookLoadPackage {
             writeLog(">>> 警告: 未找到任何 RealCall 类！请检查 OkHttp 版本");
         }
 
-        initialized = true;
         writeLog("========================================");
     }
 
@@ -196,22 +264,16 @@ public class DashenHookModule implements IXposedHookLoadPackage {
                 vault.put("gl_nonce", glNonce != null ? glNonce : "");
                 vault.put("timestamp", System.currentTimeMillis());
 
-                File dir = new File(HOOK_DIR);
-                if (!dir.exists()) {
-                    dir.mkdirs();
-                }
-                File targetFile = new File(VAULT_FILE);
-                FileWriter writer = new FileWriter(targetFile);
-                writer.write(vault.toString(2));
-                writer.close();
-
-                writeLog(">>> ✅ 凭证已写入: " + targetFile.getAbsolutePath());
+                // 通过 root 写文件
+                rootWriteFile(VAULT_FILE, vault.toString(2));
+                writeLog(">>> ✅ 凭证已写入: " + VAULT_FILE);
             }
         } catch (Throwable t) {
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            t.printStackTrace(pw);
             writeLog(">>> ❌ 处理响应异常: " + t.getMessage());
+            // 打印详细栈
+            java.io.StringWriter sw = new java.io.StringWriter();
+            java.io.PrintWriter pw = new java.io.PrintWriter(sw);
+            t.printStackTrace(pw);
             writeLog(">>> StackTrace: " + sw.toString());
         }
     }
