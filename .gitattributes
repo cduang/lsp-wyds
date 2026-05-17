@@ -1,0 +1,2 @@
+# Binary files - treat as binary to prevent CRLF/LF conversion
+*.jar binary
